@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Thu Mar 21 00:00:00 2024
+From: Antonio Galea <antonio.galea@gmail.com>
+Date: Thu, 21 Mar 2024 11:44:05 +0100
+Subject: [PATCH 1/1] cpsw: support for reading MAC address from NVMEM
+
+---
+ drivers/net/ethernet/ti/cpsw.c | 10 ++-
+ 1 file changed, 10 insertions(+), 0 deletion(-)
+
+diff --git a/drivers/net/ethernet/ti/cpsw.c b/drivers/net/ethernet/ti/cpsw.c
+index 0b7a3eb06a65..233921949bb6 100644
+--- a/drivers/net/ethernet/ti/cpsw.c
++++ b/drivers/net/ethernet/ti/cpsw.c
+@@ -3068,6 +3068,7 @@ static int cpsw_probe_dt(struct cpsw_platform_data *data,
+ 	struct device_node *slave_node;
+ 	int i = 0, ret;
+ 	u32 prop;
++	u8 addr[ETH_ALEN];
+ 
+ 	if (!node)
+ 		return -EINVAL;
+@@ -3189,6 +3190,15 @@ static int cpsw_probe_dt(struct cpsw_platform_data *data,
+ 
+ no_phy_slave:
+ 		mac_addr = of_get_mac_address(slave_node);
++		if (!mac_addr) {
++			if ((ret = of_get_nvmem_mac_address(slave_node, addr)) == 0) {
++				dev_info(&pdev->dev, "mac_addr read from nvmem\n");
++				mac_addr = addr;
++			} else {
++				dev_info(&pdev->dev, "of_get_nvmem_mac_address returned %d\n", ret);
++				mac_addr = NULL;
++			}
++		}
+ 		if (mac_addr) {
+ 			memcpy(slave_data->mac_addr, mac_addr, ETH_ALEN);
+ 		} else {
