@@ -672,6 +672,7 @@ drivers () {
 	dir 'drivers/tps65217'
 	dir 'drivers/opp'
 
+	dir 'drivers/ti/can'
 	dir 'drivers/ti/cpsw'
 	dir 'drivers/ti/etnaviv'
 	dir 'drivers/ti/eqep'
