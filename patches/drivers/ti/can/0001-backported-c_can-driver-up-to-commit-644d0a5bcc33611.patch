@@ -1,6 +1,6 @@
-From 8025d48be715496500c0fe0b909f9fc7e7b67160 Mon Sep 17 00:00:00 2001
+From 32cfdfd6d391a9abf07cb0682df8c136173aa459 Mon Sep 17 00:00:00 2001
 From: Antonio Galea <antonio.galea@gmail.com>
-Date: Thu, 31 Oct 2024 16:21:48 +0100
+Date: Thu, 31 Oct 2024 17:22:55 +0100
 Subject: [PATCH] backported c_can driver up to commit
  644d0a5bcc3361170d84fb8d0b13943c354119db
 
@@ -9,11 +9,11 @@ Subject: [PATCH] backported c_can driver up to commit
  drivers/net/can/c_can/Makefile                |   6 +
  drivers/net/can/c_can/c_can.h                 |  75 ++--
  drivers/net/can/c_can/c_can_ethtool.c         |  41 +++
- .../net/can/c_can/{c_can.c => c_can_main.c}   | 348 +++++++++++-------
+ .../net/can/c_can/{c_can.c => c_can_main.c}   | 331 +++++++++++-------
  drivers/net/can/c_can/c_can_pci.c             |  31 +-
  drivers/net/can/c_can/c_can_platform.c        |  28 +-
- include/uapi/linux/can.h                      |  39 +-
- 8 files changed, 358 insertions(+), 215 deletions(-)
+ include/uapi/linux/can.h                      |  39 ++-
+ 8 files changed, 355 insertions(+), 201 deletions(-)
  create mode 100644 drivers/net/can/c_can/c_can_ethtool.c
  rename drivers/net/can/c_can/{c_can.c => c_can_main.c} (81%)
 
@@ -267,26 +267,10 @@ diff --git a/drivers/net/can/c_can/c_can.c b/drivers/net/can/c_can/c_can_main.c
 similarity index 81%
 rename from drivers/net/can/c_can/c_can.c
 rename to drivers/net/can/c_can/c_can_main.c
-index 22d9d400c150..637486e1657b 100644
+index 2278c5fff5c6..57bdcb057f68 100644
 --- a/drivers/net/can/c_can/c_can.c
 +++ b/drivers/net/can/c_can/c_can_main.c
-@@ -27,7 +27,6 @@
- 
- #include <linux/kernel.h>
- #include <linux/module.h>
--#include <linux/moduleparam.h>
- #include <linux/interrupt.h>
- #include <linux/delay.h>
- #include <linux/netdevice.h>
-@@ -54,7 +53,6 @@
- 
- /* control register */
- #define CONTROL_SWR		BIT(15)
--#define CONTROL_ABO		BIT(9)
- #define CONTROL_TEST		BIT(7)
- #define CONTROL_CCE		BIT(6)
- #define CONTROL_DISABLE_AR	BIT(5)
-@@ -134,7 +132,6 @@
+@@ -132,7 +132,6 @@
  /* For the high buffers we clear the interrupt bit and newdat */
  #define IF_COMM_RCV_HIGH	(IF_COMM_RCV_LOW | IF_COMM_CLR_NEWDAT)
  
@@ -294,7 +278,7 @@ index 22d9d400c150..637486e1657b 100644
  /* Receive setup of message objects */
  #define IF_COMM_RCV_SETUP	(IF_COMM_MASK | IF_COMM_ARB | IF_COMM_CONTROL)
  
-@@ -163,10 +160,8 @@
+@@ -161,10 +160,8 @@
  
  #define IF_MCONT_TX		(IF_MCONT_TXIE | IF_MCONT_EOB)
  
@@ -307,25 +291,17 @@ index 22d9d400c150..637486e1657b 100644
  #define IF_TX			1
  
  /* minimum timeout for checking BUSY status */
-@@ -175,17 +170,6 @@
+@@ -173,9 +170,6 @@
  /* Wait for ~1 sec for INIT bit */
  #define INIT_WAIT_MS		1000
  
 -/* napi related */
 -#define C_CAN_NAPI_WEIGHT	C_CAN_MSG_OBJ_RX_NUM
 -
--static int disable_automatic_retransmission = 1;
--module_param(disable_automatic_retransmission, int, 0);
--MODULE_PARM_DESC(disable_automatic_retransmission, "Disable automatic retransmission of frames on error");
--
--static int auto_bus_on = 1;
--module_param(auto_bus_on, int, 0);
--MODULE_PARM_DESC(auto_bus_on, "Auto-Bus-On after a timeout");
--
  /* c_can lec values */
  enum c_can_lec_type {
  	LEC_NO_ERROR = 0,
-@@ -199,8 +183,7 @@ enum c_can_lec_type {
+@@ -189,8 +183,7 @@ enum c_can_lec_type {
  	LEC_MASK = LEC_UNUSED,
  };
  
@@ -335,7 +311,7 @@ index 22d9d400c150..637486e1657b 100644
   * Bus errors (BUS_OFF, ERROR_WARNING, ERROR_PASSIVE) are supported
   */
  enum c_can_bus_error_types {
-@@ -263,7 +246,6 @@ static void c_can_obj_update(struct net_device *dev, int iface, u32 cmd, u32 obj
+@@ -253,7 +246,6 @@ static void c_can_obj_update(struct net_device *dev, int iface, u32 cmd, u32 obj
  		udelay(1);
  	}
  	netdev_err(dev, "Updating object timed out\n");
@@ -343,7 +319,7 @@ index 22d9d400c150..637486e1657b 100644
  }
  
  static inline void c_can_object_get(struct net_device *dev, int iface,
-@@ -278,8 +260,7 @@ static inline void c_can_object_put(struct net_device *dev, int iface,
+@@ -268,8 +260,7 @@ static inline void c_can_object_put(struct net_device *dev, int iface,
  	c_can_obj_update(dev, iface, cmd | IF_COMM_WR, obj);
  }
  
@@ -353,7 +329,7 @@ index 22d9d400c150..637486e1657b 100644
   * is not allowed, but works nicely on C/DCAN. And that lowers the I/O
   * load significantly.
   */
-@@ -295,8 +276,7 @@ static void c_can_inval_msg_object(struct net_device *dev, int iface, int obj)
+@@ -285,8 +276,7 @@ static void c_can_inval_msg_object(struct net_device *dev, int iface, int obj)
  {
  	struct c_can_priv *priv = netdev_priv(dev);
  
@@ -363,7 +339,7 @@ index 22d9d400c150..637486e1657b 100644
  	c_can_inval_tx_object(dev, iface, obj);
  }
  
-@@ -304,7 +284,7 @@ static void c_can_setup_tx_object(struct net_device *dev, int iface,
+@@ -294,7 +284,7 @@ static void c_can_setup_tx_object(struct net_device *dev, int iface,
  				  struct can_frame *frame, int idx)
  {
  	struct c_can_priv *priv = netdev_priv(dev);
@@ -372,7 +348,7 @@ index 22d9d400c150..637486e1657b 100644
  	bool rtr = frame->can_id & CAN_RTR_FLAG;
  	u32 arb = IF_ARB_MSGVAL;
  	int i;
-@@ -319,12 +299,11 @@ static void c_can_setup_tx_object(struct net_device *dev, int iface,
+@@ -309,12 +299,11 @@ static void c_can_setup_tx_object(struct net_device *dev, int iface,
  	if (!rtr)
  		arb |= IF_ARB_TRANSMIT;
  
@@ -387,7 +363,7 @@ index 22d9d400c150..637486e1657b 100644
  
  		c_can_inval_msg_object(dev, iface, obj);
  		change_bit(idx, &priv->tx_dir);
-@@ -337,7 +316,7 @@ static void c_can_setup_tx_object(struct net_device *dev, int iface,
+@@ -327,7 +316,7 @@ static void c_can_setup_tx_object(struct net_device *dev, int iface,
  	if (priv->type == BOSCH_D_CAN) {
  		u32 data = 0, dreg = C_CAN_IFACE(DATA1_REG, iface);
  
@@ -396,7 +372,7 @@ index 22d9d400c150..637486e1657b 100644
  			data = (u32)frame->data[i];
  			data |= (u32)frame->data[i + 1] << 8;
  			data |= (u32)frame->data[i + 2] << 16;
-@@ -345,7 +324,7 @@ static void c_can_setup_tx_object(struct net_device *dev, int iface,
+@@ -335,7 +324,7 @@ static void c_can_setup_tx_object(struct net_device *dev, int iface,
  			priv->write_reg32(priv, dreg, data);
  		}
  	} else {
@@ -405,7 +381,7 @@ index 22d9d400c150..637486e1657b 100644
  			priv->write_reg(priv,
  					C_CAN_IFACE(DATA1_REG, iface) + i / 2,
  					frame->data[i] |
-@@ -354,15 +333,6 @@ static void c_can_setup_tx_object(struct net_device *dev, int iface,
+@@ -344,15 +333,6 @@ static void c_can_setup_tx_object(struct net_device *dev, int iface,
  	}
  }
  
@@ -421,7 +397,7 @@ index 22d9d400c150..637486e1657b 100644
  static int c_can_handle_lost_msg_obj(struct net_device *dev,
  				     int iface, int objno, u32 ctrl)
  {
-@@ -404,7 +374,16 @@ static int c_can_read_msg_object(struct net_device *dev, int iface, u32 ctrl)
+@@ -394,7 +374,15 @@ static int c_can_read_msg_object(struct net_device *dev, int iface, u32 ctrl)
  		return -ENOMEM;
  	}
  
@@ -434,12 +410,11 @@ index 22d9d400c150..637486e1657b 100644
 + * ISO 11898-1 Chapter 8.4.2.3 (DLC field)
 + */
 +#define can_cc_dlc2len(dlc) (min_t(u8, (dlc), CAN_MAX_DLEN))
-+
 +	frame->len = can_cc_dlc2len(ctrl & 0x0F);
  
  	arb = priv->read_reg32(priv, C_CAN_IFACE(ARB1_REG, iface));
  
-@@ -419,7 +398,7 @@ static int c_can_read_msg_object(struct net_device *dev, int iface, u32 ctrl)
+@@ -409,7 +397,7 @@ static int c_can_read_msg_object(struct net_device *dev, int iface, u32 ctrl)
  		int i, dreg = C_CAN_IFACE(DATA1_REG, iface);
  
  		if (priv->type == BOSCH_D_CAN) {
@@ -448,7 +423,7 @@ index 22d9d400c150..637486e1657b 100644
  				data = priv->read_reg32(priv, dreg);
  				frame->data[i] = data;
  				frame->data[i + 1] = data >> 8;
-@@ -427,7 +406,7 @@ static int c_can_read_msg_object(struct net_device *dev, int iface, u32 ctrl)
+@@ -417,7 +405,7 @@ static int c_can_read_msg_object(struct net_device *dev, int iface, u32 ctrl)
  				frame->data[i + 3] = data >> 24;
  			}
  		} else {
@@ -457,7 +432,7 @@ index 22d9d400c150..637486e1657b 100644
  				data = priv->read_reg(priv, dreg);
  				frame->data[i] = data;
  				frame->data[i + 1] = data >> 8;
-@@ -436,7 +415,7 @@ static int c_can_read_msg_object(struct net_device *dev, int iface, u32 ctrl)
+@@ -426,7 +414,7 @@ static int c_can_read_msg_object(struct net_device *dev, int iface, u32 ctrl)
  	}
  
  	stats->rx_packets++;
@@ -466,7 +441,7 @@ index 22d9d400c150..637486e1657b 100644
  
  	netif_receive_skb(skb);
  	return 0;
-@@ -457,38 +436,60 @@ static void c_can_setup_receive_object(struct net_device *dev, int iface,
+@@ -447,38 +435,60 @@ static void c_can_setup_receive_object(struct net_device *dev, int iface,
  	c_can_object_put(dev, iface, obj, IF_COMM_RCV_SETUP);
  }
  
@@ -544,7 +519,7 @@ index 22d9d400c150..637486e1657b 100644
  
  	return NETDEV_TX_OK;
  }
-@@ -530,7 +531,7 @@ static int c_can_set_bittiming(struct net_device *dev)
+@@ -520,7 +530,7 @@ static int c_can_set_bittiming(struct net_device *dev)
  	reg_brpe = brpe & BRP_EXT_BRPE_MASK;
  
  	netdev_info(dev,
@@ -553,7 +528,7 @@ index 22d9d400c150..637486e1657b 100644
  
  	ctrl_save = priv->read_reg(priv, C_CAN_CTRL_REG);
  	ctrl_save &= ~CONTROL_INIT;
-@@ -546,8 +547,7 @@ static int c_can_set_bittiming(struct net_device *dev)
+@@ -536,8 +546,7 @@ static int c_can_set_bittiming(struct net_device *dev)
  	return c_can_wait_for_ctrl_init(dev, priv, 0);
  }
  
@@ -563,7 +538,7 @@ index 22d9d400c150..637486e1657b 100644
   * C_CAN provides a total of 32 message objects that can be configured
   * either for Tx or Rx purposes. Here the first 16 message objects are used as
   * a reception FIFO. The end of reception FIFO is signified by the EoB bit
-@@ -557,17 +557,18 @@ static int c_can_set_bittiming(struct net_device *dev)
+@@ -547,17 +556,18 @@ static int c_can_set_bittiming(struct net_device *dev)
   */
  static void c_can_configure_msg_objects(struct net_device *dev)
  {
@@ -587,7 +562,7 @@ index 22d9d400c150..637486e1657b 100644
  				   IF_MCONT_RCV_EOB);
  }
  
-@@ -591,8 +592,7 @@ static int c_can_software_reset(struct net_device *dev)
+@@ -581,8 +591,7 @@ static int c_can_software_reset(struct net_device *dev)
  	return 0;
  }
  
@@ -597,7 +572,7 @@ index 22d9d400c150..637486e1657b 100644
   * - enable/disable auto-retransmission
   * - set operating mode
   * - configure message objects
-@@ -600,16 +600,15 @@ static int c_can_software_reset(struct net_device *dev)
+@@ -590,6 +599,7 @@ static int c_can_software_reset(struct net_device *dev)
  static int c_can_chip_config(struct net_device *dev)
  {
  	struct c_can_priv *priv = netdev_priv(dev);
@@ -605,19 +580,7 @@ index 22d9d400c150..637486e1657b 100644
  	int err;
  
  	err = c_can_software_reset(dev);
- 	if (err)
- 		return err;
- 
--	unsigned int val = 0;
--	if (disable_automatic_retransmission) val |= CONTROL_DISABLE_AR;
--	if (auto_bus_on) val |= CONTROL_ABO;
--	priv->write_reg(priv, C_CAN_CTRL_REG, val);
-+	/* enable automatic retransmission */
-+	priv->write_reg(priv, C_CAN_CTRL_REG, CONTROL_ENABLE_AR);
- 
- 	if ((priv->can.ctrlmode & CAN_CTRLMODE_LISTENONLY) &&
- 	    (priv->can.ctrlmode & CAN_CTRLMODE_LOOPBACK)) {
-@@ -633,8 +632,8 @@ static int c_can_chip_config(struct net_device *dev)
+@@ -621,8 +631,8 @@ static int c_can_chip_config(struct net_device *dev)
  	priv->write_reg(priv, C_CAN_STS_REG, LEC_UNUSED);
  
  	/* Clear all internal status */
@@ -628,7 +591,7 @@ index 22d9d400c150..637486e1657b 100644
  	priv->tx_dir = 0;
  
  	/* set bittiming params */
-@@ -732,48 +731,72 @@ static int c_can_get_berr_counter(const struct net_device *dev,
+@@ -720,48 +730,72 @@ static int c_can_get_berr_counter(const struct net_device *dev,
  static void c_can_do_tx(struct net_device *dev)
  {
  	struct c_can_priv *priv = netdev_priv(dev);
@@ -681,13 +644,13 @@ index 22d9d400c150..637486e1657b 100644
 +	stats->tx_bytes += bytes;
 +	stats->tx_packets += pkts;
 +	can_led_event(dev, CAN_LED_EVENT_TX);
-+
-+	tail = c_can_get_tx_tail(tx_ring);
  
 -	if (pkts) {
 -		stats->tx_bytes += bytes;
 -		stats->tx_packets += pkts;
 -		can_led_event(dev, CAN_LED_EVENT_TX);
++	tail = c_can_get_tx_tail(tx_ring);
++
 +	if (tail == 0) {
 +		u8 head = c_can_get_tx_head(tx_ring);
 +
@@ -720,7 +683,7 @@ index 22d9d400c150..637486e1657b 100644
  	 * bits we have a gap.
  	 */
  	weight = hweight32(pend);
-@@ -783,26 +806,26 @@ static u32 c_can_adjust_pending(u32 pend)
+@@ -771,26 +805,26 @@ static u32 c_can_adjust_pending(u32 pend)
  	if (lasts == weight)
  		return pend;
  
@@ -753,7 +716,7 @@ index 22d9d400c150..637486e1657b 100644
  }
  
  static int c_can_read_objects(struct net_device *dev, struct c_can_priv *priv,
-@@ -814,18 +837,19 @@ static int c_can_read_objects(struct net_device *dev, struct c_can_priv *priv,
+@@ -802,18 +836,19 @@ static int c_can_read_objects(struct net_device *dev, struct c_can_priv *priv,
  		pend &= ~BIT(obj - 1);
  
  		c_can_rx_object_get(dev, priv, obj);
@@ -777,7 +740,7 @@ index 22d9d400c150..637486e1657b 100644
  		 * odd HW behaviour. Do not remove that unless you
  		 * want to brick your machine.
  		 */
-@@ -833,7 +857,7 @@ static int c_can_read_objects(struct net_device *dev, struct c_can_priv *priv,
+@@ -821,7 +856,7 @@ static int c_can_read_objects(struct net_device *dev, struct c_can_priv *priv,
  			continue;
  
  		/* read the data from the message object */
@@ -786,7 +749,7 @@ index 22d9d400c150..637486e1657b 100644
  
  		c_can_rx_finalize(dev, priv, obj);
  
-@@ -846,19 +870,22 @@ static int c_can_read_objects(struct net_device *dev, struct c_can_priv *priv,
+@@ -834,19 +869,22 @@ static int c_can_read_objects(struct net_device *dev, struct c_can_priv *priv,
  
  static inline u32 c_can_get_pending(struct c_can_priv *priv)
  {
@@ -814,7 +777,7 @@ index 22d9d400c150..637486e1657b 100644
   *
   * We clear the newdat bit right away.
   *
-@@ -869,23 +896,16 @@ static int c_can_do_rx_poll(struct net_device *dev, int quota)
+@@ -857,23 +895,16 @@ static int c_can_do_rx_poll(struct net_device *dev, int quota)
  	struct c_can_priv *priv = netdev_priv(dev);
  	u32 pkts = 0, pend = 0, toread, n;
  
@@ -841,7 +804,7 @@ index 22d9d400c150..637486e1657b 100644
  		} else {
  			toread = pend;
  		}
-@@ -904,7 +924,7 @@ static int c_can_do_rx_poll(struct net_device *dev, int quota)
+@@ -892,7 +923,7 @@ static int c_can_do_rx_poll(struct net_device *dev, int quota)
  }
  
  static int c_can_handle_state_change(struct net_device *dev,
@@ -850,7 +813,7 @@ index 22d9d400c150..637486e1657b 100644
  {
  	unsigned int reg_err_counter;
  	unsigned int rx_err_passive;
-@@ -915,6 +935,9 @@ static int c_can_handle_state_change(struct net_device *dev,
+@@ -903,6 +934,9 @@ static int c_can_handle_state_change(struct net_device *dev,
  	struct can_berr_counter bec;
  
  	switch (error_type) {
@@ -860,7 +823,7 @@ index 22d9d400c150..637486e1657b 100644
  	case C_CAN_ERROR_WARNING:
  		/* error warning state */
  		priv->can.can_stats.error_warning++;
-@@ -945,6 +968,13 @@ static int c_can_handle_state_change(struct net_device *dev,
+@@ -933,6 +967,13 @@ static int c_can_handle_state_change(struct net_device *dev,
  				ERR_CNT_RP_SHIFT;
  
  	switch (error_type) {
@@ -874,7 +837,7 @@ index 22d9d400c150..637486e1657b 100644
  	case C_CAN_ERROR_WARNING:
  		/* error warning state */
  		cf->can_id |= CAN_ERR_CRTL;
-@@ -976,7 +1006,7 @@ static int c_can_handle_state_change(struct net_device *dev,
+@@ -964,7 +1005,7 @@ static int c_can_handle_state_change(struct net_device *dev,
  	}
  
  	stats->rx_packets++;
@@ -883,7 +846,7 @@ index 22d9d400c150..637486e1657b 100644
  	netif_receive_skb(skb);
  
  	return 1;
-@@ -990,8 +1020,7 @@ static int c_can_handle_bus_err(struct net_device *dev,
+@@ -978,8 +1019,7 @@ static int c_can_handle_bus_err(struct net_device *dev,
  	struct can_frame *cf;
  	struct sk_buff *skb;
  
@@ -893,7 +856,7 @@ index 22d9d400c150..637486e1657b 100644
  	 * no lec update means that no CAN bus event has been detected
  	 * since CPU wrote 0x7 value to status reg.
  	 */
-@@ -1010,8 +1039,7 @@ static int c_can_handle_bus_err(struct net_device *dev,
+@@ -998,8 +1038,7 @@ static int c_can_handle_bus_err(struct net_device *dev,
  	if (unlikely(!skb))
  		return 0;
  
@@ -903,7 +866,7 @@ index 22d9d400c150..637486e1657b 100644
  	 * type of the last error to occur on the CAN bus
  	 */
  	cf->can_id |= CAN_ERR_PROT | CAN_ERR_BUSERROR;
-@@ -1046,7 +1074,7 @@ static int c_can_handle_bus_err(struct net_device *dev,
+@@ -1034,7 +1073,7 @@ static int c_can_handle_bus_err(struct net_device *dev,
  	}
  
  	stats->rx_packets++;
@@ -912,7 +875,7 @@ index 22d9d400c150..637486e1657b 100644
  	netif_receive_skb(skb);
  	return 1;
  }
-@@ -1060,7 +1088,8 @@ static int c_can_poll(struct napi_struct *napi, int quota)
+@@ -1048,7 +1087,8 @@ static int c_can_poll(struct napi_struct *napi, int quota)
  
  	/* Only read the status register if a status interrupt was pending */
  	if (atomic_xchg(&priv->sie_pending, 0)) {
@@ -922,7 +885,7 @@ index 22d9d400c150..637486e1657b 100644
  		/* Ack status on C_CAN. D_CAN is self clearing */
  		if (priv->type != BOSCH_D_CAN)
  			priv->write_reg(priv, C_CAN_STS_REG, LEC_UNUSED);
-@@ -1089,11 +1118,17 @@ static int c_can_poll(struct napi_struct *napi, int quota)
+@@ -1077,11 +1117,17 @@ static int c_can_poll(struct napi_struct *napi, int quota)
  	/* handle bus recovery events */
  	if ((!(curr & STATUS_BOFF)) && (last & STATUS_BOFF)) {
  		netdev_dbg(dev, "left bus off state\n");
@@ -942,7 +905,7 @@ index 22d9d400c150..637486e1657b 100644
  	}
  
  	/* handle lec errors on the bus */
-@@ -1152,7 +1187,7 @@ static int c_can_open(struct net_device *dev)
+@@ -1140,7 +1186,7 @@ static int c_can_open(struct net_device *dev)
  
  	/* register interrupt handler */
  	err = request_irq(dev->irq, &c_can_isr, IRQF_SHARED, dev->name,
@@ -951,7 +914,7 @@ index 22d9d400c150..637486e1657b 100644
  	if (err < 0) {
  		netdev_err(dev, "failed to request interrupt\n");
  		goto exit_irq_fail;
-@@ -1200,17 +1235,35 @@ static int c_can_close(struct net_device *dev)
+@@ -1188,17 +1234,35 @@ static int c_can_close(struct net_device *dev)
  	return 0;
  }
  
@@ -990,7 +953,7 @@ index 22d9d400c150..637486e1657b 100644
  
  	priv->dev = dev;
  	priv->can.bittiming_const = &c_can_bittiming_const;
-@@ -1244,7 +1297,7 @@ int c_can_power_down(struct net_device *dev)
+@@ -1232,7 +1296,7 @@ int c_can_power_down(struct net_device *dev)
  	/* Wait for the PDA bit to get set */
  	time_out = jiffies + msecs_to_jiffies(INIT_WAIT_MS);
  	while (!(priv->read_reg(priv, C_CAN_STS_REG) & STATUS_PDA) &&
@@ -999,7 +962,7 @@ index 22d9d400c150..637486e1657b 100644
  		cpu_relax();
  
  	if (time_after(jiffies, time_out))
-@@ -1285,15 +1338,25 @@ int c_can_power_up(struct net_device *dev)
+@@ -1273,15 +1337,25 @@ int c_can_power_up(struct net_device *dev)
  	/* Wait for the PDA bit to get clear */
  	time_out = jiffies + msecs_to_jiffies(INIT_WAIT_MS);
  	while ((priv->read_reg(priv, C_CAN_STS_REG) & STATUS_PDA) &&
@@ -1030,7 +993,7 @@ index 22d9d400c150..637486e1657b 100644
  
  	return ret;
  }
-@@ -1329,6 +1392,7 @@ int register_c_can_dev(struct net_device *dev)
+@@ -1317,6 +1391,7 @@ int register_c_can_dev(struct net_device *dev)
  
  	dev->flags |= IFF_ECHO;	/* we support local echo */
  	dev->netdev_ops = &c_can_netdev_ops;

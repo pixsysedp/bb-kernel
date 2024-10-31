@@ -1,14 +1,17 @@
-From 833c3c105162abd4ef6b4d732e73caa2009bfba2 Mon Sep 17 00:00:00 2001
+From 822b53d26e0f5b9e612ce387e5348b775bdb21d5 Mon Sep 17 00:00:00 2001
 From: Antonio Galea <antonio.galea@gmail.com>
-Date: Wed, 30 Oct 2024 11:33:39 +0100
+Date: Thu, 31 Oct 2024 16:47:23 +0100
 Subject: [PATCH] c_can driver: add parameters for DAR, ABO bits in CTL
  register
 
+---
+ drivers/net/can/c_can/c_can_main.c | 17 +++++++++++++++--
+ 1 file changed, 15 insertions(+), 2 deletions(-)
 
-diff --git a/drivers/net/can/c_can/c_can.c b/drivers/net/can/c_can/c_can.c
-index 2278c5fff5c6..22d9d400c150 100644
---- a/drivers/net/can/c_can/c_can.c
-+++ b/drivers/net/can/c_can/c_can.c
+diff --git a/drivers/net/can/c_can/c_can_main.c b/drivers/net/can/c_can/c_can_main.c
+index 637486e1657b..5e3beec967cf 100644
+--- a/drivers/net/can/c_can/c_can_main.c
++++ b/drivers/net/can/c_can/c_can_main.c
 @@ -27,6 +27,7 @@
  
  #include <linux/kernel.h>
@@ -25,22 +28,22 @@ index 2278c5fff5c6..22d9d400c150 100644
  #define CONTROL_TEST		BIT(7)
  #define CONTROL_CCE		BIT(6)
  #define CONTROL_DISABLE_AR	BIT(5)
-@@ -176,6 +178,14 @@
- /* napi related */
- #define C_CAN_NAPI_WEIGHT	C_CAN_MSG_OBJ_RX_NUM
+@@ -170,6 +172,14 @@
+ /* Wait for ~1 sec for INIT bit */
+ #define INIT_WAIT_MS		1000
  
-+static int disable_automatic_retransmission = 1;
++static int disable_automatic_retransmission = 0;
 +module_param(disable_automatic_retransmission, int, 0);
-+MODULE_PARM_DESC(disable_automatic_retransmission, "Disable automatic retransmission of frames on error");
++MODULE_PARM_DESC(disable_automatic_retransmission, "Disable automatic retransmission of frames on error (default 0)");
 +
-+static int auto_bus_on = 1;
++static int auto_bus_on = 0;
 +module_param(auto_bus_on, int, 0);
-+MODULE_PARM_DESC(auto_bus_on, "Auto-Bus-On after a timeout");
++MODULE_PARM_DESC(auto_bus_on, "Auto-Bus-On after a timeout (default 0)");
 +
  /* c_can lec values */
  enum c_can_lec_type {
  	LEC_NO_ERROR = 0,
-@@ -596,8 +606,10 @@ static int c_can_chip_config(struct net_device *dev)
+@@ -607,8 +617,11 @@ static int c_can_chip_config(struct net_device *dev)
  	if (err)
  		return err;
  
@@ -50,6 +53,7 @@ index 2278c5fff5c6..22d9d400c150 100644
 +	if (disable_automatic_retransmission) val |= CONTROL_DISABLE_AR;
 +	if (auto_bus_on) val |= CONTROL_ABO;
 +	priv->write_reg(priv, C_CAN_CTRL_REG, val);
++
  
  	if ((priv->can.ctrlmode & CAN_CTRLMODE_LISTENONLY) &&
  	    (priv->can.ctrlmode & CAN_CTRLMODE_LOOPBACK)) {
