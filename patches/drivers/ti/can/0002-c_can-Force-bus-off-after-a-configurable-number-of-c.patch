@@ -1,0 +1,87 @@
+From 0b7647545dffa16b3705053f14546fea2ffb15f5 Mon Sep 17 00:00:00 2001
+From: Antonio Galea <antonio.galea@gmail.com>
+Date: Mon, 4 Nov 2024 15:35:13 +0100
+Subject: [PATCH] c_can: Force bus-off after a configurable number of
+ consecutive ACK errors
+
+---
+ drivers/net/can/c_can/c_can_main.c | 35 +++++++++++++++++++++++++++++-
+ 1 file changed, 34 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/can/c_can/c_can_main.c b/drivers/net/can/c_can/c_can_main.c
+index 57bdcb057f68..3ce63e8a3be4 100644
+--- a/drivers/net/can/c_can/c_can_main.c
++++ b/drivers/net/can/c_can/c_can_main.c
+@@ -27,6 +27,7 @@
+ 
+ #include <linux/kernel.h>
+ #include <linux/module.h>
++#include <linux/moduleparam.h>
+ #include <linux/interrupt.h>
+ #include <linux/delay.h>
+ #include <linux/netdevice.h>
+@@ -170,6 +171,30 @@
+ /* Wait for ~1 sec for INIT bit */
+ #define INIT_WAIT_MS		1000
+ 
++static int max_consecutive_ack_errors = 256;
++static int _set(const char *val, const struct kernel_param *kp)
++{
++	int n = 0;
++	int ret = kstrtoint(val, 10, &n);
++	if (ret != 0 || n < 256 || n > 65536)
++		return -EINVAL;
++	max_consecutive_ack_errors = n;
++	return 0;
++}
++static int _get(char *buffer, const struct kernel_param *kp)
++{
++	sprintf(buffer, "%d\n", max_consecutive_ack_errors);
++	return strlen(buffer);
++}
++static const struct kernel_param_ops param_ops = {
++	.set	= _set,
++	.get	= _get,
++};
++module_param_cb(max_consecutive_ack_errors, &param_ops, NULL, 0660);
++MODULE_PARM_DESC(max_consecutive_ack_errors, "Force bus-off after this many consecutive ACK errors (min 256; max 65535; default 256)");
++
++static int consecutive_ack_errors = 0;
++
+ /* c_can lec values */
+ enum c_can_lec_type {
+ 	LEC_NO_ERROR = 0,
+@@ -1019,6 +1044,12 @@ static int c_can_handle_bus_err(struct net_device *dev,
+ 	struct can_frame *cf;
+ 	struct sk_buff *skb;
+ 
++	if (lec_type == LEC_ACK_ERROR) {
++		consecutive_ack_errors++;
++	} else {
++		consecutive_ack_errors = 0;
++	}
++
+ 	/* early exit if no lec update or no error.
+ 	 * no lec update means that no CAN bus event has been detected
+ 	 * since CPU wrote 0x7 value to status reg.
+@@ -1029,6 +1060,7 @@ static int c_can_handle_bus_err(struct net_device *dev,
+ 	if (!(priv->can.ctrlmode & CAN_CTRLMODE_BERR_REPORTING))
+ 		return 0;
+ 
++
+ 	/* common for all type of bus errors */
+ 	priv->can.can_stats.bus_error++;
+ 	stats->rx_errors++;
+@@ -1108,7 +1140,8 @@ static int c_can_poll(struct napi_struct *napi, int quota)
+ 		work_done += c_can_handle_state_change(dev, C_CAN_ERROR_PASSIVE);
+ 	}
+ 
+-	if ((curr & STATUS_BOFF) && (!(last & STATUS_BOFF))) {
++	if (((curr & STATUS_BOFF) && (!(last & STATUS_BOFF))) || (consecutive_ack_errors > max_consecutive_ack_errors)) {
++		consecutive_ack_errors = 0;
+ 		netdev_dbg(dev, "entered bus off state\n");
+ 		work_done += c_can_handle_state_change(dev, C_CAN_BUS_OFF);
+ 		goto end;
+-- 
+2.39.5
+
