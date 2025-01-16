@@ -1,0 +1,93 @@
+From 4169c3e3998609fbdef90981074f45d433308762 Mon Sep 17 00:00:00 2001
+From: Antonio Galea <antonio.galea@gmail.com>
+Date: Thu, 28 Nov 2024 17:32:21 +0100
+Subject: [PATCH] AM335x has 64 CAN objects
+
+---
+ drivers/net/can/c_can/c_can.c | 15 ++++-----------
+ drivers/net/can/c_can/c_can.h |  8 +++++---
+ 2 files changed, 9 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/net/can/c_can/c_can.c b/drivers/net/can/c_can/c_can.c
+index 2278c5fff5c6..fe411b6fd051 100644
+--- a/drivers/net/can/c_can/c_can.c
++++ b/drivers/net/can/c_can/c_can.c
+@@ -538,8 +538,8 @@ static int c_can_set_bittiming(struct net_device *dev)
+ 
+ /*
+  * Configure C_CAN message objects for Tx and Rx purposes:
+- * C_CAN provides a total of 32 message objects that can be configured
+- * either for Tx or Rx purposes. Here the first 16 message objects are used as
++ * C_CAN provides a total of 64 message objects that can be configured
++ * either for Tx or Rx purposes. Here the first 32 message objects are used as
+  * a reception FIFO. The end of reception FIFO is signified by the EoB bit
+  * being SET. The remaining 16 message objects are kept aside for Tx purposes.
+  * See user guide document for further details on configuring message
+@@ -723,7 +723,7 @@ static void c_can_do_tx(struct net_device *dev)
+ 	struct net_device_stats *stats = &dev->stats;
+ 	u32 idx, obj, pkts = 0, bytes = 0, pend, clr;
+ 
+-	clr = pend = priv->read_reg(priv, C_CAN_INTPND2_REG);
++	clr = pend = priv->read_reg32(priv, C_CAN_INTPND3_REG);
+ 
+ 	while ((idx = ffs(pend))) {
+ 		idx--;
+@@ -834,7 +834,7 @@ static int c_can_read_objects(struct net_device *dev, struct c_can_priv *priv,
+ 
+ static inline u32 c_can_get_pending(struct c_can_priv *priv)
+ {
+-	u32 pend = priv->read_reg(priv, C_CAN_NEWDAT1_REG);
++	u32 pend = priv->read_reg32(priv, C_CAN_NEWDAT1_REG);
+ 
+ 	return pend;
+ }
+@@ -857,13 +857,6 @@ static int c_can_do_rx_poll(struct net_device *dev, int quota)
+ 	struct c_can_priv *priv = netdev_priv(dev);
+ 	u32 pkts = 0, pend = 0, toread, n;
+ 
+-	/*
+-	 * It is faster to read only one 16bit register. This is only possible
+-	 * for a maximum number of 16 objects.
+-	 */
+-	BUILD_BUG_ON_MSG(C_CAN_MSG_OBJ_RX_LAST > 16,
+-			"Implementation does not support more message objects than 16");
+-
+ 	while (quota > 0) {
+ 		if (!pend) {
+ 			pend = c_can_get_pending(priv);
+diff --git a/drivers/net/can/c_can/c_can.h b/drivers/net/can/c_can/c_can.h
+index d5567a7c1c6d..46e4f5d3317f 100644
+--- a/drivers/net/can/c_can/c_can.h
++++ b/drivers/net/can/c_can/c_can.h
+@@ -23,9 +23,9 @@
+ #define C_CAN_H
+ 
+ /* message object split */
+-#define C_CAN_NO_OF_OBJECTS	32
+-#define C_CAN_MSG_OBJ_RX_NUM	16
+-#define C_CAN_MSG_OBJ_TX_NUM	16
++#define C_CAN_NO_OF_OBJECTS	64
++#define C_CAN_MSG_OBJ_RX_NUM	32
++#define C_CAN_MSG_OBJ_TX_NUM	32
+ 
+ #define C_CAN_MSG_OBJ_RX_FIRST	1
+ #define C_CAN_MSG_OBJ_RX_LAST	(C_CAN_MSG_OBJ_RX_FIRST + \
+@@ -76,6 +76,7 @@ enum reg {
+ 	C_CAN_NEWDAT2_REG,
+ 	C_CAN_INTPND1_REG,
+ 	C_CAN_INTPND2_REG,
++	C_CAN_INTPND3_REG,
+ 	C_CAN_MSGVAL1_REG,
+ 	C_CAN_MSGVAL2_REG,
+ 	C_CAN_FUNCTION_REG,
+@@ -137,6 +138,7 @@ static const u16 reg_map_d_can[] = {
+ 	[C_CAN_NEWDAT2_REG]	= 0x9E,
+ 	[C_CAN_INTPND1_REG]	= 0xB0,
+ 	[C_CAN_INTPND2_REG]	= 0xB2,
++	[C_CAN_INTPND3_REG]	= 0xB4,
+ 	[C_CAN_MSGVAL1_REG]	= 0xC4,
+ 	[C_CAN_MSGVAL2_REG]	= 0xC6,
+ 	[C_CAN_IF1_COMREQ_REG]	= 0x100,
+-- 
+2.39.5
+
